@@ -45,14 +45,14 @@ Requires `pip install pillow numpy`.
 
 ```sh
 cd scoreboard
-python make_logo_pack.py nfl nba mlb ncaaf --upload 192.168.87.80
+python make_logo_pack.py nfl nba mlb ncaaf ahl --upload 192.168.87.80
 ```
 
-League codes match Team Tracker's `league` attribute, lower-cased. `ncaaf` is trimmed to Division 1 (FBS + FCS). Each run writes `packs/sb_<league>.bin` and a `packs/preview_<league>.png` sheet to review.
+League codes match Team Tracker's `league` attribute, lower-cased. `ncaaf` is trimmed to Division 1 (FBS + FCS). AHL teams and logos come from HockeyTech, using the public key bundled with Team Tracker; HockeyTech lists no team colors, so those are taken from each logo. Each run writes `packs/sb_<league>.bin` and a `packs/preview_<league>.png` sheet to review.
 
 To replace a logo that doesn't read well at 8x8, draw an 8x8 PNG (black or transparent = off), save it as `overrides/<league>/<ABBR>.png`, and run the tool again.
 
-AHL logos aren't available yet. Until then, AHL games show the first two letters of each team's abbreviation in place of a logo.
+A team missing from its league's pack shows the first two letters of its abbreviation in place of a logo.
 
 ## Home Assistant
 

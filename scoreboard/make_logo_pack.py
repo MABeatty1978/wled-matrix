@@ -47,6 +47,13 @@ LEAGUES = {
     "nwsl": "soccer/usa.nwsl",
 }
 
+# Leagues ESPN doesn't cover, read from HockeyTech like Team Tracker does:
+# league code -> (client code, public key bundled with Team Tracker)
+HOCKEYTECH = {
+    "ahl": ("ahl", "50c2cd9b5e18e390"),
+}
+HOCKEYTECH_URL = "https://lscluster.hockeytech.com/feed/index.php"
+
 # Leagues trimmed to ESPN groups (college lists otherwise include every division)
 GROUPS = {
     "ncaaf": [80, 81],  # Division 1: FBS + FCS
@@ -77,6 +84,16 @@ def fetch(url, cache_dir=None):
         with open(path, "wb") as f:
             f.write(data)
     return data
+
+
+def hockeytech_teams(client_code, key):
+    """Current regular-season teams; colors come from the logos since HockeyTech has none."""
+    base = f"{HOCKEYTECH_URL}?feed=modulekit&key={key}&client_code={client_code}&fmt=json"
+    seasons = json.loads(fetch(base + "&view=seasons"))["SiteKit"]["Seasons"]
+    season = next(s for s in seasons if s["career"] == "1" and s["playoff"] == "0")
+    raw = json.loads(fetch(base + f"&view=teamsbyseason&season_id={season['season_id']}&lang=en"))["SiteKit"]["Teamsbyseason"]
+    return [{"abbr": t["code"].upper(), "name": t.get("name", t["code"]), "color": None, "alt": None,
+             "logo": t.get("team_logo_url")} for t in raw if t.get("code")]
 
 
 def espn_group_ids(sport_league, groups):
@@ -206,6 +223,21 @@ def led_color(hexstr):
     return tuple(int(v) for v in rgb.round())
 
 
+def logo_colors(png_bytes):
+    """Two most common colorful logo colors as hex strings, for teams without listed colors."""
+    rgba = np.array(load_square(png_bytes).resize((128, 128), Image.LANCZOS))
+    px = rgba[rgba[:, :, 3] > 200][:, :3].astype(np.int32)
+    colorful = px[(px.max(1) - px.min(1)) > 40]
+    if len(colorful) == 0:
+        return None, None
+    q = Image.fromarray(colorful.astype(np.uint8).reshape(1, -1, 3)).quantize(4, method=Image.Quantize.MEDIANCUT)
+    qi = np.array(q).ravel()
+    pal = np.array(q.getpalette()[: (int(qi.max()) + 1) * 3]).reshape(-1, 3)
+    order = np.argsort(np.bincount(qi))[::-1]
+    hexes = ["%02x%02x%02x" % tuple(pal[i]) for i in order[:2]]
+    return hexes[0], hexes[1] if len(hexes) > 1 else None
+
+
 def team_colors(team):
     c1 = led_color(team["color"]) or led_color(team["alt"]) or (255, 255, 255)
     c2 = led_color(team["alt"]) or (255, 255, 255)
@@ -284,14 +316,23 @@ def main():
     for spec in args.leagues:
         code, _, path = spec.partition("=")
         code = code.lower()
-        path = path or LEAGUES.get(code)
-        if not path:
-            sys.exit(f"Unknown league '{code}'. Use code=sport/league, e.g. epl=soccer/eng.1")
-        small, big = CELEBRATE.get(path.split("/")[0], (1, 255))
-
-        teams = espn_teams(path, args.cache, GROUPS.get(code))
-        print(f"{code}: {len(teams)} teams from ESPN ({path})")
+        if code in HOCKEYTECH and not path:
+            small, big = CELEBRATE["hockey"]
+            teams = hockeytech_teams(*HOCKEYTECH[code])
+            print(f"{code}: {len(teams)} teams from HockeyTech")
+        else:
+            path = path or LEAGUES.get(code)
+            if not path:
+                sys.exit(f"Unknown league '{code}'. Use code=sport/league, e.g. epl=soccer/eng.1")
+            small, big = CELEBRATE.get(path.split("/")[0], (1, 255))
+            teams = espn_teams(path, args.cache, GROUPS.get(code))
+            print(f"{code}: {len(teams)} teams from ESPN ({path})")
         for t in teams:
+            if t["color"] is None and t["logo"]:
+                try:
+                    t["color"], t["alt"] = logo_colors(fetch(t["logo"], args.cache))
+                except Exception:
+                    pass
             t["c1"], t["c2"] = team_colors(t)
             ov = os.path.join(args.overrides, code, t["abbr"] + ".png")
             t["override"] = os.path.exists(ov)
