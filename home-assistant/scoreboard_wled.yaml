@@ -1,0 +1,117 @@
+# Home Assistant package: WLED Scoreboard on the 8x32 matrix, fed by Team Tracker
+#
+# Needs tempest_wled.yaml in the same packages folder (it provides
+# rest_command.wled_matrix_show, the effect ID sensors and script.wled_matrix_weather),
+# the Scoreboard effect in the WLED firmware, and logo packs (sb_<league>.bin) uploaded to WLED.
+#
+# Shows a game from 1 hour before the start time until 1 hour after it ends, then hands the
+# matrix back to the weather display. Home team logo on the left, away team on the right.
+#
+# Fill in your Team Tracker sensors below, highest priority first. When two games overlap,
+# a live game wins over an upcoming one, which wins over a finished one; ties go to the
+# sensor listed first.
+
+template:
+  - sensor:
+      - name: "WLED Scoreboard"
+        unique_id: wled_matrix_scoreboard
+        icon: mdi:scoreboard
+        # "lg|HOME|AWAY|ST|HS|AS|INFO|POS" (see the Scoreboard effect in firmware/matrix_fx/matrix_fx.cpp), or "off"
+        state: >-
+          {% set trackers = [
+            'sensor.team_tracker_nfl',
+            'sensor.team_tracker_ncaaf',
+            'sensor.team_tracker_nba',
+            'sensor.team_tracker_mlb',
+            'sensor.team_tracker_ahl',
+          ] %}
+          {% set ns = namespace(best=none, rank=0) %}
+          {% for e in trackers %}
+            {% set o = expand(e) | first | default(none) %}
+            {% if o %}
+              {% set d = o.attributes.date %}
+              {% set start = as_datetime(d) if d else none %}
+              {# POST: shown for 1 hour after the state flipped; the start-time check keeps an
+                 HA restart from bringing back a game that ended long ago #}
+              {% set rank = 3 if o.state == 'IN'
+                   else 2 if o.state == 'PRE' and start and now() >= start - timedelta(hours=1)
+                   else 1 if o.state == 'POST' and now() - o.last_changed < timedelta(hours=1)
+                            and start and now() - start < timedelta(hours=8)
+                   else 0 %}
+              {% if rank > ns.rank %}{% set ns.best = o %}{% set ns.rank = rank %}{% endif %}
+            {% endif %}
+          {% endfor %}
+          {% if ns.best is none %}off{% else %}
+            {% set a = ns.best.attributes %}
+            {% set s = ns.best.state %}
+            {% set lg = ((a.league if a.league and a.league != 'XXX' else a.league_path) or 'none') | lower %}
+            {% set home = a.team_homeaway != 'away' %}
+            {% set ha = ((a.team_abbr if home else a.opponent_abbr) or '?') | upper | replace('|', '') %}
+            {% set aa = ((a.opponent_abbr if home else a.team_abbr) or '?') | upper | replace('|', '') %}
+            {% set hs = (a.team_score if home else a.opponent_score) | int(0) %}
+            {% set ascore = (a.opponent_score if home else a.team_score) | int(0) %}
+            {% set clock = (a.clock or '') | string %}
+            {% set q = a.quarter | int(0) %}
+            {% set sport = (a.sport or '') | lower %}
+            {% if s == 'PRE' %}
+              {% set t = as_local(as_datetime(a.date)) %}
+              {% set info = (t.hour % 12 or 12) ~ ':' ~ t.strftime('%M') %}
+            {% elif s == 'POST' %}
+              {% set info = 'F/OT' if 'OT' in clock else 'F/SO' if 'SO' in clock else 'FINAL' %}
+            {% elif 'half' in clock | lower %}
+              {% set info = 'HALF' %}
+            {% elif sport == 'baseball' %}
+              {% set info = clock[:1] | upper ~ (clock | regex_findall_index('\d+') if clock is search('\d') else '') %}
+            {% elif sport == 'hockey' %}
+              {% set info = 'P' ~ q if q <= 3 else 'OT' if q == 4 else 'SO' %}
+            {% elif sport == 'soccer' %}
+              {% set info = clock | replace(' ', '') if clock | length <= 5 else (q ~ 'H') %}
+            {% elif lg in ['ncaam', 'ncaaw'] %}
+              {% set info = 'H' ~ q if q <= 2 else 'OT' %}
+            {% else %}
+              {% set info = 'Q' ~ q if q <= 4 else 'OT' if q == 5 else (q - 4) ~ 'OT' %}
+            {% endif %}
+            {% set pos = '' %}
+            {% if s == 'IN' and a.possession %}
+              {% set mine = a.possession | string == a.team_id | string %}
+              {% set theirs = a.possession | string == a.opponent_id | string %}
+              {% if mine or theirs %}{% set pos = 'H' if mine == home else 'A' %}{% endif %}
+            {% endif %}
+            {% set st = {'PRE': 'P', 'IN': 'I', 'POST': 'F'}[s] %}
+            {% set parts = [lg, ha, aa, st, hs, ascore, info | upper | replace('|', ''), pos] %}
+            {% set out = parts | join('|') %}
+            {{ out if out | length <= 32 else (parts[:6] | join('|'))[:32] }}
+          {% endif %}
+
+automation:
+  - alias: "WLED Matrix - Scoreboard"
+    id: wled_matrix_scoreboard_update
+    mode: queued
+    max: 5
+    triggers:
+      - trigger: state
+        entity_id: sensor.wled_scoreboard
+      # Re-send during a game in case WLED rebooted or something else changed the effect
+      - trigger: time_pattern
+        minutes: "/5"
+        id: refresh
+    conditions:
+      - condition: template
+        value_template: >-
+          {% set board = states('sensor.wled_scoreboard') %}
+          {{ board not in ['unknown', 'unavailable'] and not (trigger.id == 'refresh' and board == 'off') }}
+    actions:
+      - variables:
+          board: "{{ states('sensor.wled_scoreboard') }}"
+      - if:
+          - condition: template
+            value_template: "{{ board == 'off' }}"
+        then:
+          - action: script.wled_matrix_weather
+        else:
+          - condition: template
+            value_template: "{{ is_number(states('sensor.wled_matrix_scoreboard_fx_id')) }}"
+          - action: rest_command.wled_matrix_show
+            data:
+              fx: "{{ states('sensor.wled_matrix_scoreboard_fx_id') | int }}"
+              name: "{{ board }}"

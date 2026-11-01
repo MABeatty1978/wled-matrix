@@ -1,0 +1,59 @@
+diff --git a/package.json b/package.json
+index 82fbb5f..cee8c42 100644
+--- a/package.json
++++ b/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "wled",
+-  "version": "17.0.0-devV5",
++  "version": "16.0.1",
+   "description": "Tools for WLED project",
+   "main": "tools/cdata.js",
+   "directories": {
+diff --git a/wled00/data/common.js b/wled00/data/common.js
+index b899ba7..0357a90 100644
+--- a/wled00/data/common.js
++++ b/wled00/data/common.js
+@@ -6,7 +6,7 @@ var loc = false, locip, locproto = "http:";
+ // by setting `window.__noDevBanner = true` before common.js loads.
+ // Skipped inside iframes since the embedding page already shows its own banner.
+ (function devBanner() {
+-	if (window.__noDevBanner) return;
++	return;
+ 	try { if (window.self !== window.top) return; } catch (e) { return; } // cross-origin iframe, be safe and skip
+ 	function add() {
+ 		if (d.getElementById('devBanner')) return;
+diff --git a/wled00/data/index.css b/wled00/data/index.css
+index 41cb9b7..da6b74b 100644
+--- a/wled00/data/index.css
++++ b/wled00/data/index.css
+@@ -26,7 +26,7 @@
+ 	--c-tba: rgba(102, 102, 102, var(--t-b));
+ 	--c-tbh: rgba(51, 51, 51, var(--t-b));
+ 	/*following are internal*/
+-	--dbh: 24px; /* dev banner height */
++	--dbh: 0px; /* dev banner height */
+ 	--th: calc(70px + var(--dbh));
+ 	--tp: calc(70px + var(--dbh));
+ 	--bh: 63px;
+@@ -81,6 +81,7 @@ body {
+ }
+ 
+ #devBanner {
++	display: none !important;
+ 	position: fixed;
+ 	top: 0;
+ 	left: 0;
+diff --git a/wled00/wled_metadata.cpp b/wled00/wled_metadata.cpp
+index e9b114a..727d6b2 100644
+--- a/wled00/wled_metadata.cpp
++++ b/wled00/wled_metadata.cpp
+@@ -5,7 +5,7 @@
+ #ifndef WLED_VERSION
+   #warning WLED_VERSION was not set - using default value of 'dev'
+   //#define WLED_VERSION dev
+-  #define WLED_VERSION 17.0.0-devV5  // ToDO: remove once that set_metadata.py is fixed for V5
++  #define WLED_VERSION 16.0.1  // ToDO: remove once that set_metadata.py is fixed for V5
+   #if !defined(WLED_REPO)
+     #define WLED_REPO "wled/wled"    // ToDO: remove once that set_metadata.py is fixed for V5
+   #endif
