@@ -1,8 +1,8 @@
 # Home Assistant package: WLED Scoreboard on the 8x32 matrix, fed by Team Tracker
 #
-# Needs tempest_wled.yaml in the same packages folder (it provides
-# rest_command.wled_matrix_show, the effect ID sensors and script.wled_matrix_weather),
-# the Scoreboard effect in the WLED firmware, and logo packs (sb_<league>.bin) uploaded to WLED.
+# Needs the Scoreboard effect in the WLED firmware and logo packs (sb_<league>.bin) uploaded
+# to WLED. When no game is showing, the matrix is handed back to automation.display_weather_info
+# (automations.yaml), which pauses itself while sensor.wled_scoreboard is not 'off'.
 #
 # Shows a game from 1 hour before the start time until 1 hour after it ends, then hands the
 # matrix back to the weather display. Home team logo on the left, away team on the right.
@@ -10,6 +10,26 @@
 # Fill in your Team Tracker sensors below, highest priority first. When two games overlap,
 # a live game wins over an upcoming one, which wins over a finished one; ties go to the
 # sensor listed first.
+
+rest_command:
+  # Sets the effect and Segment Name text of segment 0 in one request
+  wled_matrix_show:
+    url: "http://192.168.87.80/json/state"
+    method: POST
+    content_type: "application/json"
+    payload: '{"seg":[{"id":0,"fx":{{ fx | int }},"n":{{ name | string | to_json }}}]}'
+
+# Custom effect IDs are assigned when the firmware boots, so look them up by name
+rest:
+  - resource: "http://192.168.87.80/json/effects"
+    scan_interval: 3600
+    sensor:
+      - name: "WLED Matrix Tempest FX ID"
+        unique_id: wled_matrix_tempest_fx_id
+        value_template: "{{ value_json.index('Tempest Weather') if 'Tempest Weather' in value_json else 'unknown' }}"
+      - name: "WLED Matrix Scoreboard FX ID"
+        unique_id: wled_matrix_scoreboard_fx_id
+        value_template: "{{ value_json.index('Scoreboard') if 'Scoreboard' in value_json else 'unknown' }}"
 
 template:
   - sensor:
@@ -107,7 +127,11 @@ automation:
           - condition: template
             value_template: "{{ board == 'off' }}"
         then:
-          - action: script.wled_matrix_weather
+          - action: automation.trigger
+            target:
+              entity_id: automation.display_weather_info
+            data:
+              skip_condition: false
         else:
           - condition: template
             value_template: "{{ is_number(states('sensor.wled_matrix_scoreboard_fx_id')) }}"

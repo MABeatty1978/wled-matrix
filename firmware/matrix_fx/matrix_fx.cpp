@@ -14,7 +14,7 @@ static void mode_static(void) {
 /*
  * Tempest Weather 2D Effect for 8x32 Matrix (and larger 2D panels)
  * Features:
- *  - Left 8x8 animated pixel-art weather icons (SUN, PCLOUD, CLOUD, RAIN1..5, STORM1..5, SNOW1..5, NIGHT)
+ *  - Left 8x8 animated pixel-art weather icons (SUN, PCLOUD, CLOUD, RAIN1..5, STORM1..5, SNOW1..5, NIGHT, NIGHTP)
  *    + Automatic 8-point Wind Compass icon (N, NE, E, SE, S, SW, W, NW) when displaying Wind page
  *  - Dynamic Rain/Snow intensity (1..5) with wind-driven slant, speed, and bottom-row puddle splashes
  *  - Ambient wind streaks proportional to Tempest wind speed
@@ -32,7 +32,8 @@ enum WeatherCond : uint8_t {
   WCOND_STORM = 4,
   WCOND_SNOW = 5,
   WCOND_NIGHT = 6,
-  WCOND_WIND = 7
+  WCOND_WIND = 7,
+  WCOND_PNIGHT = 8   // partly cloudy at night: moon behind a cloud
 };
 
 enum WindCompassDir : uint8_t {
@@ -319,7 +320,7 @@ static void mode_2D_tempest_weather(void) {
     triggerWeatherLightning(st, now);
   }
 
-  // Check Condition Prefix before ':' (e.g. "RAIN3:", "STORM4:", "SUN:", "PCLOUD:", "CLOUD:", "SNOW2:", "NIGHT:")
+  // Check Condition Prefix before ':' (e.g. "RAIN3:", "STORM4:", "SUN:", "PCLOUD:", "CLOUD:", "SNOW2:", "NIGHT:", "NIGHTP:")
   const char* colon = strchr(cursor, ':');
   const char* firstPipe = strchr(cursor, '|');
   if (colon && (!firstPipe || colon < firstPipe)) {
@@ -331,6 +332,7 @@ static void mode_2D_tempest_weather(void) {
       else if (strncmp(cursor, "RAIN", 4) == 0 || strncmp(cursor, "DRIZ", 4) == 0) cond = WCOND_RAIN;
       else if (strncmp(cursor, "STORM", 5) == 0 || strncmp(cursor, "THUN", 4) == 0) cond = WCOND_STORM;
       else if (strncmp(cursor, "SNOW", 4) == 0) cond = WCOND_SNOW;
+      else if (strncmp(cursor, "NIGHTP", 6) == 0) cond = WCOND_PNIGHT; // must precede NIGHT
       else if (strncmp(cursor, "NIGHT", 5) == 0) cond = WCOND_NIGHT;
       else if (strncmp(cursor, "WIND", 4) == 0) cond = WCOND_WIND;
 
@@ -542,6 +544,13 @@ static void mode_2D_tempest_weather(void) {
     SEGMENT.setPixelColorXY(0, 2, RGBW32(255, 160, 0, 0));
     int8_t drift = (sin8_t(now / (18 - min((uint8_t)12, (uint8_t)(windSpeed / 3)))) > 160) ? 1 : 0;
     drawWeatherCloud(drift, 3, RGBW32(215, 225, 240, 0));
+  } else if (cond == WCOND_PNIGHT) {
+    // Small crescent moon top-left, twinkling star, cloud drifting across the bottom (like PCLOUD)
+    static const uint8_t PMOON[8][2] = {{2,0},{3,0},{1,1},{2,1},{1,2},{2,2},{1,3},{2,3}};
+    for (uint8_t i = 0; i < 8; i++) SEGMENT.setPixelColorXY(PMOON[i][0], PMOON[i][1], RGBW32(255, 230, 120, 0));
+    blendWeatherPix(6, 1, RGBW32(255, 255, 255, 0), sin8_t(now / 14));
+    int8_t drift = (sin8_t(now / (18 - min((uint8_t)12, (uint8_t)(windSpeed / 3)))) > 160) ? 1 : 0;
+    drawWeatherCloud(drift, 3, RGBW32(150, 160, 185, 0));
   } else if (cond == WCOND_CLOUD) {
     int8_t drift = (sin8_t(now / (18 - min((uint8_t)12, (uint8_t)(windSpeed / 3)))) > 160) ? 1 : 0;
     drawWeatherCloud(0, 1, RGBW32(105, 120, 140, 0));

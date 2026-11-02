@@ -56,16 +56,26 @@ A team missing from its league's pack shows the first two letters of its abbrevi
 
 ## Home Assistant
 
-Copy both files in `home-assistant/` to `/config/packages/`, with this in `configuration.yaml`:
+Copy `home-assistant/scoreboard_wled.yaml` to `/config/packages/`, with this in `configuration.yaml`:
 
 ```yaml
 homeassistant:
   packages: !include_dir_named packages
 ```
 
-Then:
+Then list your Team Tracker sensors in `scoreboard_wled.yaml` in priority order. The package also provides
+`rest_command.wled_matrix_show` and sensors that look up the Tempest Weather and Scoreboard effect IDs by name.
 
-1. In `tempest_wled.yaml`, replace the Tempest and weather entity IDs with yours.
-2. In `scoreboard_wled.yaml`, list your Team Tracker sensors in priority order.
+### Weather display
 
-`scoreboard_wled.yaml` depends on `tempest_wled.yaml`; the weather package works on its own.
+The weather display is driven by an automation in Home Assistant (`automation.display_weather_info`), which the
+scoreboard hands the matrix back to when no game is showing. It pauses while a game is on the scoreboard and
+sends the Tempest Weather effect a Segment Name like:
+
+```
+CLOUD:58*F|68/45|N 0|H 70%
+```
+
+Condition prefixes: `SUN`, `PCLOUD`, `CLOUD`, `RAIN1`..`RAIN5`, `STORM1`..`STORM5`, `SNOW1`..`SNOW5`, `WIND`,
+`NIGHT` (clear night, moon) and `NIGHTP` (partly cloudy night, moon behind a cloud). Firmware older than `NIGHTP`
+shows the plain moon for it. The ESP8266 keeps only 32 characters, so drop trailing pages that don't fit.
