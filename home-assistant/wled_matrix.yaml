@@ -1,15 +1,28 @@
-# Home Assistant package: WLED Scoreboard on the 8x32 matrix, fed by Team Tracker
+# Home Assistant package: WLED 8x32 matrix at 192.168.87.80
 #
-# Needs the Scoreboard effect in the WLED firmware and logo packs (sb_<league>.bin) uploaded
-# to WLED. When no game is showing, the matrix is handed back to automation.display_weather_info
-# (automations.yaml), which pauses itself while sensor.wled_scoreboard is not 'off'.
+# Everything for the matrix lives in this one file:
+#   - Tempest Weather display (script + automation)
+#   - Scoreboard fed by Team Tracker (template sensor + automation)
+#   - rest_command and effect-ID sensors shared by both
 #
-# Shows a game from 1 hour before the start time until 1 hour after it ends, then hands the
-# matrix back to the weather display. Home team logo on the left, away team on the right.
+# Install: copy to /config/packages/ and make sure configuration.yaml has
+#   homeassistant:
+#     packages: !include_dir_named packages
 #
-# Fill in your Team Tracker sensors below, highest priority first. When two games overlap,
-# a live game wins over an upcoming one, which wins over a finished one; ties go to the
-# sensor listed first.
+# Automations defined here show as read-only in the HA UI; edit this file instead.
+#
+# Weather entity IDs used below (replace with yours):
+#   weather.home, sensor.tempest_temperature, sensor.tempest_humidity,
+#   sensor.tempest_wind_speed, sensor.tempest_wind_direction_cardinal,
+#   sensor.tempest_precipitation_rate (in/hr), sensor.tempest_lightning_strike_distance (miles)
+#
+# Scoreboard: shows a game from 1 hour before the start time until 1 hour after it ends,
+# then hands the matrix back to the weather display. Home team logo on the left, away team
+# on the right. Needs logo packs (sb_<league>.bin) uploaded to WLED. List your Team Tracker
+# sensors in the WLED Scoreboard sensor below, highest priority first. When two games
+# overlap, a live game wins over an upcoming one, which wins over a finished one; ties go
+# to the sensor listed first.
+
 
 rest_command:
   # Sets the effect and Segment Name text of segment 0 in one request
@@ -30,6 +43,79 @@ rest:
       - name: "WLED Matrix Scoreboard FX ID"
         unique_id: wled_matrix_scoreboard_fx_id
         value_template: "{{ value_json.index('Scoreboard') if 'Scoreboard' in value_json else 'unknown' }}"
+
+script:
+  wled_matrix_weather:
+    alias: "WLED Matrix - Show Weather"
+    mode: restart
+    fields:
+      strike:
+        description: "True when a nearby lightning strike triggered this update"
+        example: false
+    sequence:
+      # Hold off while the scoreboard owns the matrix
+      - condition: template
+        value_template: >-
+          {{ states('sensor.wled_scoreboard') in ['off', 'unknown', 'unavailable']
+             and is_number(states('sensor.wled_matrix_tempest_fx_id')) }}
+      - action: weather.get_forecasts
+        target:
+          entity_id: weather.home
+        data:
+          type: daily
+        response_variable: fc
+        continue_on_error: true
+      - variables:
+          daily: "{{ fc['weather.home'].forecast if fc is defined and 'weather.home' in fc else [] }}"
+
+          # 1. Current Temperature, High/Low, and Humidity
+          temp_now: "{{ states('sensor.tempest_temperature') | float(60) | round(0) | int }}"
+          temp_high: "{{ (daily[0].temperature if daily else temp_now + 5) | round(0) | int }}"
+          temp_low: "{{ (daily[0].templow if daily and daily[0].templow is defined else temp_now - 8) | round(0) | int }}"
+          humidity: "{{ states('sensor.tempest_humidity') | float(50) | round(0) | int }}"
+
+          # 2. Wind Direction (N, NE, E, SE, S, SW, W, NW) & Speed (mph)
+          wind_mph: "{{ states('sensor.tempest_wind_speed') | float(0) | round(0) | int }}"
+          wind_dir: "{{ states('sensor.tempest_wind_direction_cardinal') if states('sensor.tempest_wind_direction_cardinal') not in ['unknown', 'unavailable'] else 'NW' }}"
+
+          # 3. Tempest Rain Intensity Level (1=Drizzle .. 5=Downpour)
+          rain_rate: "{{ states('sensor.tempest_precipitation_rate') | float(0) }}"
+          rain_lvl: >-
+            {% if rain_rate < 0.05 %}1
+            {% elif rain_rate < 0.15 %}2
+            {% elif rain_rate < 0.35 %}3
+            {% elif rain_rate < 1.00 %}4
+            {% else %}5{% endif %}
+
+          # 4. Map Home Assistant / Tempest Weather Condition to Effect Prefix
+          ha_cond: "{{ states('weather.home') }}"
+          cond_prefix: >-
+            {% if rain_rate > 0 and ha_cond not in ['lightning', 'lightning-rainy', 'snowy'] %}RAIN{{ rain_lvl }}
+            {% elif ha_cond in ['lightning', 'lightning-rainy'] %}STORM{{ rain_lvl }}
+            {% elif ha_cond in ['pouring'] %}RAIN5
+            {% elif ha_cond in ['rainy'] %}RAIN{{ rain_lvl }}
+            {% elif ha_cond in ['snowy', 'snowy-rainy', 'hail'] %}SNOW{{ rain_lvl }}
+            {% elif ha_cond in ['partlycloudy'] %}{{ 'NIGHTP' if is_state('sun.sun', 'below_horizon') else 'PCLOUD' }}
+            {% elif ha_cond in ['cloudy', 'fog'] %}CLOUD
+            {% elif ha_cond in ['windy', 'windy-variant'] %}WIND
+            {% elif ha_cond in ['clear-night'] %}NIGHT
+            {% else %}SUN{% endif %}
+
+          # 5. Real-time Lightning Strike <= 10 miles: "BOLT:<miles> <nonce>|" (the nonce makes repeat strikes re-trigger)
+          strike_dist: "{{ states('sensor.tempest_lightning_strike_distance') | float(99) | round(0) | int }}"
+          bolt_prefix: "{{ 'BOLT:' ~ strike_dist ~ ' ' ~ now().second ~ '|' if strike | default(false) and strike_dist <= 10 else '' }}"
+
+          # Final Segment Name payload (e.g. "RAIN3:56*F|63/48|NW 14|H 72%").
+          # The ESP8266 keeps only 32 characters, so trailing pages are dropped when they won't fit.
+          pages: "{{ [cond_prefix ~ ':' ~ temp_now ~ '*F', temp_high ~ '/' ~ temp_low, wind_dir ~ ' ' ~ wind_mph, 'H ' ~ humidity ~ '%'] }}"
+          wled_text: >-
+            {% set ns = namespace(s=bolt_prefix ~ pages[0]) %}
+            {% for p in pages[1:] if (ns.s ~ '|' ~ p) | length <= 32 %}{% set ns.s = ns.s ~ '|' ~ p %}{% endfor %}
+            {{ ns.s }}
+      - action: rest_command.wled_matrix_show
+        data:
+          fx: "{{ states('sensor.wled_matrix_tempest_fx_id') | int }}"
+          name: "{{ wled_text }}"
 
 template:
   - sensor:
@@ -104,6 +190,26 @@ template:
           {% endif %}
 
 automation:
+  - alias: "WLED Matrix - Update Tempest Weather Display"
+    id: wled_matrix_tempest_weather_update
+    mode: restart
+    triggers:
+      - trigger: time_pattern
+        minutes: "/2"
+      - trigger: state
+        entity_id:
+          - weather.home
+          - sensor.tempest_temperature
+          - sensor.tempest_precipitation_rate
+          - sensor.tempest_wind_speed
+      - trigger: state
+        entity_id: sensor.tempest_lightning_strike_distance
+        id: lightning_strike
+    actions:
+      - action: script.wled_matrix_weather
+        data:
+          strike: "{{ trigger.id == 'lightning_strike' }}"
+
   - alias: "WLED Matrix - Scoreboard"
     id: wled_matrix_scoreboard_update
     mode: queued
@@ -127,11 +233,7 @@ automation:
           - condition: template
             value_template: "{{ board == 'off' }}"
         then:
-          - action: automation.trigger
-            target:
-              entity_id: automation.display_weather_info
-            data:
-              skip_condition: false
+          - action: script.wled_matrix_weather
         else:
           - condition: template
             value_template: "{{ is_number(states('sensor.wled_matrix_scoreboard_fx_id')) }}"

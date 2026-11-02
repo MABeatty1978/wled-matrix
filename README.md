@@ -12,7 +12,7 @@ Custom firmware effects and Home Assistant automations for an 8x32 WLED matrix o
 | `firmware/matrix_fx/` | WLED usermod with both effects |
 | `firmware/platformio_override.ini` | Build settings; points WLED at the usermod |
 | `firmware/wled-tweaks.patch` | Small edits to WLED itself: version label 16.0.1, development banner hidden |
-| `home-assistant/` | Home Assistant packages for the weather and scoreboard |
+| `home-assistant/wled_matrix.yaml` | Home Assistant package for the weather display and scoreboard |
 | `scoreboard/make_logo_pack.py` | Builds 8x8 team logo packs and uploads them to WLED |
 | `scoreboard/overrides/` | Hand-drawn 8x8 logos that replace the automatic ones |
 
@@ -56,26 +56,36 @@ A team missing from its league's pack shows the first two letters of its abbrevi
 
 ## Home Assistant
 
-Copy `home-assistant/scoreboard_wled.yaml` to `/config/packages/`, with this in `configuration.yaml`:
+Everything Home Assistant needs is in one package, `home-assistant/wled_matrix.yaml`: the weather display, the
+scoreboard, the `rest_command` that drives the matrix, and sensors that look up the Tempest Weather and Scoreboard
+effect IDs by name. Copy it to `/config/packages/`, with this in `configuration.yaml`:
 
 ```yaml
 homeassistant:
   packages: !include_dir_named packages
 ```
 
-Then list your Team Tracker sensors in `scoreboard_wled.yaml` in priority order. The package also provides
-`rest_command.wled_matrix_show` and sensors that look up the Tempest Weather and Scoreboard effect IDs by name.
+Then, in `wled_matrix.yaml`:
+
+1. Replace the Tempest and weather entity IDs with yours (listed at the top of the file).
+2. List your Team Tracker sensors in the `WLED Scoreboard` sensor, highest priority first.
+
+**Keep it to this one file.** Don't recreate any of these automations or scripts in the Home Assistant UI or
+`automations.yaml`; this file is the only copy. Automations from a package show as read-only in the UI, so edit the
+file, commit it, and copy it to `/config/packages/` again.
 
 ### Weather display
 
-The weather display is driven by an automation in Home Assistant (`automation.display_weather_info`), which the
-scoreboard hands the matrix back to when no game is showing. It pauses while a game is on the scoreboard and
-sends the Tempest Weather effect a Segment Name like:
+Every 2 minutes, and whenever the weather changes, the package sends the Tempest Weather effect a Segment Name like:
 
 ```
 CLOUD:58*F|68/45|N 0|H 70%
 ```
 
 Condition prefixes: `SUN`, `PCLOUD`, `CLOUD`, `RAIN1`..`RAIN5`, `STORM1`..`STORM5`, `SNOW1`..`SNOW5`, `WIND`,
-`NIGHT` (clear night, moon) and `NIGHTP` (partly cloudy night, moon behind a cloud). Firmware older than `NIGHTP`
-shows the plain moon for it. The ESP8266 keeps only 32 characters, so drop trailing pages that don't fit.
+`NIGHT` (clear night, moon) and `NIGHTP` (partly cloudy night, moon behind a cloud). Partly cloudy becomes `NIGHTP`
+while the sun is below the horizon. Firmware older than `NIGHTP` shows the plain moon for it. The ESP8266 keeps only
+32 characters, so trailing pages that don't fit are dropped.
+
+Weather updates pause while a game is on the scoreboard; when the game window ends the scoreboard hands the matrix
+straight back to the weather display.
