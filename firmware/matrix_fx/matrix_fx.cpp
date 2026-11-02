@@ -20,6 +20,7 @@ static void mode_static(void) {
  *  - Ambient wind streaks proportional to Tempest wind speed
  *  - Real-time Tempest Lightning Strike simulation (<10 miles): jagged lightning bolt, multi-pulse flash,
  *    and high-visibility distance alert ("4 MI") triggered via "BOLT:<dist> MI|" prefix or Strike! checkbox (o1)
+ *  - Pulsing NWS alert underline below the icon while the segment's third color is set (black = off)
  *  - Auto-cycling non-scrolling static pages separated by '|' in Segment Name
  *    Example Segment Name: "RAIN3:56°F|63/48|NW 14|H 72%" or "BOLT:4 MI|STORM4:56°F|63/48|NW 22|H 88%"
  */
@@ -141,6 +142,15 @@ static void drawWeatherCloud(int16_t ox, int16_t oy, uint32_t col, uint8_t alpha
       if ((bits >> (6 - c)) & 1) blendWeatherPix(ox + c, oy + r, col, alpha);
     }
   }
+}
+
+// NWS alert marker shared by both effects. Home Assistant sets the segment's third color
+// to the alert color (red = warning, orange = watch, yellow = advisory); black = no alert.
+static void drawAlertMarker(int16_t x, int16_t y, uint8_t w, uint32_t now) {
+  const uint32_t c = SEGCOLOR(2);
+  if ((c & 0x00FFFFFF) == 0) return;
+  const uint8_t a = 70 + scale8(sin8_t(now / 6), 185);
+  for (uint8_t i = 0; i < w; i++) blendWeatherPix(x + i, y, c, a);
 }
 
 static void drawWindCompass8x8(uint8_t wdir, uint8_t mph, uint32_t now) {
@@ -592,6 +602,9 @@ static void mode_2D_tempest_weather(void) {
     blendWeatherPix(5, 6, RGBW32(180, 210, 255, 0), 255 - tw);
   }
 
+  // NWS alert underline on the icon's bottom row
+  drawAlertMarker(0, 7, 8, now);
+
   // 3. Right 24x8 Static Auto-Cycling Text Page
   const char* pStr = pagePtrs[pageIdx];
   uint8_t pLen = pageLens[pageIdx];
@@ -851,6 +864,7 @@ static void mode_2D_scoreboard(void) {
   SEGMENT.fill(BLACK);
   if (nTok < 6) {
     drawScoreboardText("--", midC - 3, ty, RGBW32(80, 80, 90, 0), 255);
+    drawAlertMarker(midC - 1, y0, 2, now);
     return;
   }
 
@@ -1006,6 +1020,9 @@ static void mode_2D_scoreboard(void) {
   if (markX >= 0 && gameState == 'I') {
     for (uint8_t i = 0; i < markW; i++) blendWeatherPix(markX + i, y0 + 7, RGBW32(255, 120, 0, 0), scale8(alpha, 200));
   }
+
+  // NWS alert marker: 2 pixels at the top center, between the logos
+  drawAlertMarker(midC - 1, y0, 2, now);
 }
 
 static const char _data_FX_MODE_2D_SCOREBOARD[] PROGMEM = "Scoreboard@Page time,Sparkles,,,,No celebrations;;;2;sx=128,ix=160";
